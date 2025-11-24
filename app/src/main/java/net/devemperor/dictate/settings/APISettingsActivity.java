@@ -41,21 +41,25 @@ public class APISettingsActivity extends AppCompatActivity {
     private int transcriptionProvider;
     private String transcriptionOpenAIModel;
     private String transcriptionGroqModel;
+    private String transcriptionOpenRouterModel;
     private String transcriptionAPIKey;
     private String transcriptionCustomHost;
     private String transcriptionCustomModel;
     private int rewordingProvider;
     private String rewordingOpenAIModel;
     private String rewordingGroqModel;
+    private String rewordingOpenRouterModel;
     private String rewordingAPIKey;
     private String rewordingCustomHost;
     private String rewordingCustomModel;
 
     private ArrayAdapter<CharSequence> transcriptionModelOpenAIAdapter;
     private ArrayAdapter<CharSequence> transcriptionModelGroqAdapter;
+    private ArrayAdapter<CharSequence> transcriptionModelOpenRouterAdapter;
     private ArrayAdapter<CharSequence> transcriptionProviderAdapter;
     private ArrayAdapter<CharSequence> rewordingModelOpenAIAdapter;
     private ArrayAdapter<CharSequence> rewordingModelGroqAdapter;
+    private ArrayAdapter<CharSequence> rewordingModelOpenRouterAdapter;
     private ArrayAdapter<CharSequence> rewordingProviderAdapter;
 
     @Override
@@ -94,6 +98,7 @@ public class APISettingsActivity extends AppCompatActivity {
         transcriptionProvider = sp.getInt("net.devemperor.dictate.transcription_provider", 0);
         transcriptionOpenAIModel = sp.getString("net.devemperor.dictate.transcription_openai_model", sp.getString("net.devemperor.dictate.transcription_model", "gpt-4o-mini-transcribe"));  // for upgrading: default is the old rewording model
         transcriptionGroqModel = sp.getString("net.devemperor.dictate.transcription_groq_model", "whisper-large-v3-turbo");
+        transcriptionOpenRouterModel = sp.getString("net.devemperor.dictate.transcription_openrouter_model", "google/gemini-2.5-flash");
         transcriptionAPIKey = sp.getString("net.devemperor.dictate.transcription_api_key", sp.getString("net.devemperor.dictate.api_key", ""));  // for upgrading: default is the old rewording API key
         transcriptionCustomHost = sp.getString("net.devemperor.dictate.transcription_custom_host", "");
         transcriptionCustomModel = sp.getString("net.devemperor.dictate.transcription_custom_model", "");
@@ -102,6 +107,8 @@ public class APISettingsActivity extends AppCompatActivity {
         transcriptionModelOpenAIAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         transcriptionModelGroqAdapter = ArrayAdapter.createFromResource(this, R.array.dictate_transcription_models_groq, android.R.layout.simple_spinner_item);
         transcriptionModelGroqAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        transcriptionModelOpenRouterAdapter = ArrayAdapter.createFromResource(this, R.array.dictate_transcription_models_openrouter, android.R.layout.simple_spinner_item);
+        transcriptionModelOpenRouterAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
 
         transcriptionProviderAdapter = ArrayAdapter.createFromResource(this, R.array.dictate_api_providers, android.R.layout.simple_spinner_item);
         transcriptionProviderAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -119,8 +126,23 @@ public class APISettingsActivity extends AppCompatActivity {
         });
         updateTranscriptionModels(transcriptionProvider);  // update the models based on the selected provider
 
-        transcriptionModelSpn.setAdapter(transcriptionProvider != 1 ? transcriptionModelOpenAIAdapter : transcriptionModelGroqAdapter);
-        transcriptionModelSpn.setSelection(transcriptionProvider != 1 ? transcriptionModelOpenAIAdapter.getPosition(transcriptionOpenAIModel) : transcriptionModelGroqAdapter.getPosition(transcriptionGroqModel));
+        switch (transcriptionProvider) {
+            case 0:
+                transcriptionModelSpn.setAdapter(transcriptionModelOpenAIAdapter);
+                transcriptionModelSpn.setSelection(transcriptionModelOpenAIAdapter.getPosition(transcriptionOpenAIModel));
+                break;
+            case 1:
+                transcriptionModelSpn.setAdapter(transcriptionModelGroqAdapter);
+                transcriptionModelSpn.setSelection(transcriptionModelGroqAdapter.getPosition(transcriptionGroqModel));
+                break;
+            case 2:
+                transcriptionModelSpn.setAdapter(transcriptionModelOpenRouterAdapter);
+                transcriptionModelSpn.setSelection(transcriptionModelOpenRouterAdapter.getPosition(transcriptionOpenRouterModel));
+                break;
+            default:
+                transcriptionModelSpn.setAdapter(transcriptionModelOpenAIAdapter);
+                transcriptionModelSpn.setSelection(0);
+        }
         transcriptionModelSpn.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
@@ -128,10 +150,14 @@ public class APISettingsActivity extends AppCompatActivity {
                     String model = getResources().getStringArray(R.array.dictate_transcription_models_openai_values)[position];
                     sp.edit().putString("net.devemperor.dictate.transcription_openai_model", model).apply();
                     transcriptionOpenAIModel = model;
-                } else {
+                } else if (transcriptionProvider == 1) {
                     String model = getResources().getStringArray(R.array.dictate_transcription_models_groq_values)[position];
                     sp.edit().putString("net.devemperor.dictate.transcription_groq_model", model).apply();
                     transcriptionGroqModel = model;
+                } else if (transcriptionProvider == 2) {
+                    String model = getResources().getStringArray(R.array.dictate_transcription_models_openrouter_values)[position];
+                    sp.edit().putString("net.devemperor.dictate.transcription_openrouter_model", model).apply();
+                    transcriptionOpenRouterModel = model;
                 }
             }
             @Override
@@ -167,6 +193,7 @@ public class APISettingsActivity extends AppCompatActivity {
         rewordingProvider = sp.getInt("net.devemperor.dictate.rewording_provider", 0);
         rewordingOpenAIModel = sp.getString("net.devemperor.dictate.rewording_openai_model", sp.getString("net.devemperor.dictate.rewording_model", "gpt-4o-mini"));  // for upgrading: default is the old rewording model
         rewordingGroqModel = sp.getString("net.devemperor.dictate.rewording_groq_model", "llama-3.3-70b-versatile");
+        rewordingOpenRouterModel = sp.getString("net.devemperor.dictate.rewording_openrouter_model", "google/gemini-2.5-flash");
         rewordingAPIKey = sp.getString("net.devemperor.dictate.rewording_api_key", sp.getString("net.devemperor.dictate.api_key", ""));  // for upgrading: default is the old rewording API key
         rewordingCustomHost = sp.getString("net.devemperor.dictate.rewording_custom_host", "");
         rewordingCustomModel = sp.getString("net.devemperor.dictate.rewording_custom_model", "");
@@ -175,6 +202,8 @@ public class APISettingsActivity extends AppCompatActivity {
         rewordingModelOpenAIAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         rewordingModelGroqAdapter = ArrayAdapter.createFromResource(this, R.array.dictate_rewording_models_groq, android.R.layout.simple_spinner_item);
         rewordingModelGroqAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        rewordingModelOpenRouterAdapter = ArrayAdapter.createFromResource(this, R.array.dictate_rewording_models_openrouter, android.R.layout.simple_spinner_item);
+        rewordingModelOpenRouterAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
 
         rewordingProviderAdapter = ArrayAdapter.createFromResource(this, R.array.dictate_api_providers, android.R.layout.simple_spinner_item);
         rewordingProviderAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -192,8 +221,23 @@ public class APISettingsActivity extends AppCompatActivity {
         });
         updateRewordingModels(rewordingProvider);  // update the models based on the selected provider
 
-        rewordingModelSpn.setAdapter(rewordingProvider != 1 ? rewordingModelOpenAIAdapter : rewordingModelGroqAdapter);
-        rewordingModelSpn.setSelection(rewordingProvider != 1 ? rewordingModelOpenAIAdapter.getPosition(rewordingOpenAIModel) : rewordingModelGroqAdapter.getPosition(rewordingGroqModel));
+        switch (rewordingProvider) {
+            case 0:
+                rewordingModelSpn.setAdapter(rewordingModelOpenAIAdapter);
+                rewordingModelSpn.setSelection(rewordingModelOpenAIAdapter.getPosition(rewordingOpenAIModel));
+                break;
+            case 1:
+                rewordingModelSpn.setAdapter(rewordingModelGroqAdapter);
+                rewordingModelSpn.setSelection(rewordingModelGroqAdapter.getPosition(rewordingGroqModel));
+                break;
+            case 2:
+                rewordingModelSpn.setAdapter(rewordingModelOpenRouterAdapter);
+                rewordingModelSpn.setSelection(rewordingModelOpenRouterAdapter.getPosition(rewordingOpenRouterModel));
+                break;
+            default:
+                rewordingModelSpn.setAdapter(rewordingModelOpenAIAdapter);
+                rewordingModelSpn.setSelection(0);
+        }
         rewordingModelSpn.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
@@ -201,10 +245,14 @@ public class APISettingsActivity extends AppCompatActivity {
                     String model = getResources().getStringArray(R.array.dictate_rewording_models_openai_values)[position];
                     sp.edit().putString("net.devemperor.dictate.rewording_openai_model", model).apply();
                     rewordingOpenAIModel = model;
-                } else {
+                } else if (rewordingProvider == 1) {
                     String model = getResources().getStringArray(R.array.dictate_rewording_models_groq_values)[position];
                     sp.edit().putString("net.devemperor.dictate.rewording_groq_model", model).apply();
                     rewordingGroqModel = model;
+                } else if (rewordingProvider == 2) {
+                    String model = getResources().getStringArray(R.array.dictate_rewording_models_openrouter_values)[position];
+                    sp.edit().putString("net.devemperor.dictate.rewording_openrouter_model", model).apply();
+                    rewordingOpenRouterModel = model;
                 }
             }
             @Override
@@ -237,8 +285,8 @@ public class APISettingsActivity extends AppCompatActivity {
     }
 
     private void updateTranscriptionModels(int position) {
-        transcriptionCustomFieldsWrapper.setVisibility(position == 2 ? View.VISIBLE : View.GONE);
-        transcriptionModelSpn.setEnabled(position != 2);
+        transcriptionCustomFieldsWrapper.setVisibility(position == 3 ? View.VISIBLE : View.GONE);
+        transcriptionModelSpn.setEnabled(position != 3);
 
         if (position == 0) {
             transcriptionModelSpn.setAdapter(transcriptionModelOpenAIAdapter);
@@ -256,12 +304,20 @@ public class APISettingsActivity extends AppCompatActivity {
                     .findFirst()
                     .orElse(0);
             transcriptionModelSpn.setSelection(pos);
+        } else if (position == 2) {
+            transcriptionModelSpn.setAdapter(transcriptionModelOpenRouterAdapter);
+
+            int pos = IntStream.range(0, transcriptionModelOpenRouterAdapter.getCount())
+                    .filter(i -> getResources().getStringArray(R.array.dictate_transcription_models_openrouter_values)[i].equals(transcriptionOpenRouterModel))
+                    .findFirst()
+                    .orElse(0);
+            transcriptionModelSpn.setSelection(pos);
         }
     }
 
     private void updateRewordingModels(int position) {
-        rewordingCustomFieldsWrapper.setVisibility(position == 2 ? View.VISIBLE : View.GONE);
-        rewordingModelSpn.setEnabled(position != 2);
+        rewordingCustomFieldsWrapper.setVisibility(position == 3 ? View.VISIBLE : View.GONE);
+        rewordingModelSpn.setEnabled(position != 3);
 
         if (position == 0) {
             rewordingModelSpn.setAdapter(rewordingModelOpenAIAdapter);
@@ -276,6 +332,14 @@ public class APISettingsActivity extends AppCompatActivity {
 
             int pos = IntStream.range(0, rewordingModelGroqAdapter.getCount())
                     .filter(i -> getResources().getStringArray(R.array.dictate_rewording_models_groq_values)[i].equals(rewordingGroqModel))
+                    .findFirst()
+                    .orElse(0);
+            rewordingModelSpn.setSelection(pos);
+        } else if (position == 2) {
+            rewordingModelSpn.setAdapter(rewordingModelOpenRouterAdapter);
+
+            int pos = IntStream.range(0, rewordingModelOpenRouterAdapter.getCount())
+                    .filter(i -> getResources().getStringArray(R.array.dictate_rewording_models_openrouter_values)[i].equals(rewordingOpenRouterModel))
                     .findFirst()
                     .orElse(0);
             rewordingModelSpn.setSelection(pos);
