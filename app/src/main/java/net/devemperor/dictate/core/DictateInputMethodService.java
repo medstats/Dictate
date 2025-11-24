@@ -31,6 +31,7 @@ import android.os.Vibrator;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.util.Log;
+import android.util.Base64;
 import android.view.ContextThemeWrapper;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -85,6 +86,8 @@ import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.io.OutputStream;
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -96,6 +99,13 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 // MAIN CLASS
 public class DictateInputMethodService extends InputMethodService {
@@ -1437,31 +1447,38 @@ public class DictateInputMethodService extends InputMethodService {
                 switch (transcriptionProvider) {  // for upgrading: use old transcription_model preference
                     case 0: transcriptionModel = sp.getString("net.devemperor.dictate.transcription_openai_model", sp.getString("net.devemperor.dictate.transcription_model", "gpt-4o-mini-transcribe")); break;
                     case 1: transcriptionModel = sp.getString("net.devemperor.dictate.transcription_groq_model", "whisper-large-v3-turbo"); break;
-                    case 2: transcriptionModel = sp.getString("net.devemperor.dictate.transcription_custom_model", getString(R.string.dictate_custom_transcription_model_hint));
+                    case 2: transcriptionModel = sp.getString("net.devemperor.dictate.transcription_openrouter_model", "google/gemini-2.5-flash"); break;
+                    case 3: transcriptionModel = sp.getString("net.devemperor.dictate.transcription_custom_model", getString(R.string.dictate_custom_transcription_model_hint));
                 }
 
-                OpenAIOkHttpClient.Builder clientBuilder = OpenAIOkHttpClient.builder()
-                        .apiKey(apiKey)
-                        .baseUrl(apiHost)
-                        .timeout(Duration.ofSeconds(120));
+                String resultText;
+                if (transcriptionProvider == 2) {
+                    resultText = requestOpenRouterTranscription(apiHost, apiKey, transcriptionModel, stylePrompt);
+                    resultText = applyAutoFormattingIfEnabled(resultText);
+                } else {
+                    OpenAIOkHttpClient.Builder clientBuilder = OpenAIOkHttpClient.builder()
+                            .apiKey(apiKey)
+                            .baseUrl(apiHost)
+                            .timeout(Duration.ofSeconds(120));
 
-                TranscriptionCreateParams.Builder transcriptionBuilder = TranscriptionCreateParams.builder()
-                        .file(audioFile.toPath())
-                        .model(transcriptionModel)
-                        .responseFormat(AudioResponseFormat.JSON);  // gpt-4o-transcribe only supports json
+                    TranscriptionCreateParams.Builder transcriptionBuilder = TranscriptionCreateParams.builder()
+                            .file(audioFile.toPath())
+                            .model(transcriptionModel)
+                            .responseFormat(AudioResponseFormat.JSON);  // gpt-4o-transcribe only supports json
 
-                if (!currentInputLanguageValue.equals("detect")) transcriptionBuilder.language(currentInputLanguageValue);
-                if (!stylePrompt.isEmpty()) transcriptionBuilder.prompt(stylePrompt);
-                if (sp.getBoolean("net.devemperor.dictate.proxy_enabled", false)) {
-                    if (DictateUtils.isValidProxy(proxyHost)) DictateUtils.applyProxy(clientBuilder, sp);
+                    if (!currentInputLanguageValue.equals("detect")) transcriptionBuilder.language(currentInputLanguageValue);
+                    if (!stylePrompt.isEmpty()) transcriptionBuilder.prompt(stylePrompt);
+                    if (sp.getBoolean("net.devemperor.dictate.proxy_enabled", false)) {
+                        if (DictateUtils.isValidProxy(proxyHost)) DictateUtils.applyProxy(clientBuilder, sp);
+                    }
+                    Log.d("DictateKeyboardSerice", "Style-Prompt: " + stylePrompt);
+
+                    Transcription transcription = clientBuilder.build().audio().transcriptions().create(transcriptionBuilder.build()).asTranscription();
+                    resultText = transcription.text().strip();  // Groq sometimes adds leading whitespace
+                    resultText = applyAutoFormattingIfEnabled(resultText);
+
+                    usageDb.edit(transcriptionModel, DictateUtils.getAudioDuration(audioFile), 0, 0, transcriptionProvider);
                 }
-                Log.d("DictateKeyboardSerice", "Style-Prompt: " + stylePrompt);
-
-                Transcription transcription = clientBuilder.build().audio().transcriptions().create(transcriptionBuilder.build()).asTranscription();
-                String resultText = transcription.text().strip();  // Groq sometimes adds leading whitespace
-                resultText = applyAutoFormattingIfEnabled(resultText);
-
-                usageDb.edit(transcriptionModel, DictateUtils.getAudioDuration(audioFile), 0, 0, transcriptionProvider);
 
                 boolean processedByQueuedPrompts = false;
                 List<Integer> promptsToApply;
@@ -1531,6 +1548,131 @@ public class DictateInputMethodService extends InputMethodService {
                 recordButton.setEnabled(true);
             });
         });
+    }
+
+    private String requestOpenRouterTranscription(String apiHost, String apiKey, String model, String stylePrompt) {
+        try {
+            if (TextUtils.isEmpty(apiHost)) throw new IllegalStateException("API host missing");
+            if (TextUtils.isEmpty(apiKey)) throw new IllegalStateException("API key missing");
+            if (TextUtils.isEmpty(model)) throw new IllegalStateException("Transcription model missing");
+
+            String normalizedHost = apiHost.endsWith("/") ? apiHost : apiHost + "/";
+            URL url = new URL(normalizedHost + "chat/completions");
+
+            byte[] audioBytes = Files.readAllBytes(audioFile.toPath());
+            String encodedAudio = Base64.encodeToString(audioBytes, Base64.NO_WRAP);
+
+            JSONObject request = new JSONObject();
+            request.put("model", model);
+
+            JSONArray content = new JSONArray();
+            StringBuilder promptBuilder = new StringBuilder();
+            if (!TextUtils.isEmpty(stylePrompt)) {
+                promptBuilder.append(stylePrompt).append("\n\n");
+            }
+            promptBuilder.append("Please transcribe the audio input and return the transcript text only.");
+            content.put(new JSONObject().put("type", "text").put("text", promptBuilder.toString()));
+
+            JSONObject inputAudio = new JSONObject();
+            inputAudio.put("data", encodedAudio);
+            inputAudio.put("format", detectAudioFormat(audioFile));
+            content.put(new JSONObject().put("type", "input_audio").put("input_audio", inputAudio));
+
+            JSONObject userMessage = new JSONObject();
+            userMessage.put("role", "user");
+            userMessage.put("content", content);
+
+            JSONArray messages = new JSONArray();
+            messages.put(userMessage);
+
+            request.put("messages", messages);
+            request.put("temperature", 0);
+            request.put("response_format", new JSONObject().put("type", "text"));
+
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Authorization", "Bearer " + apiKey);
+            connection.setRequestProperty("X-Title", getString(R.string.app_name));
+            connection.setConnectTimeout(120000);
+            connection.setReadTimeout(120000);
+            connection.setDoOutput(true);
+
+            byte[] payload = request.toString().getBytes(StandardCharsets.UTF_8);
+            try (OutputStream os = connection.getOutputStream()) {
+                os.write(payload);
+            }
+
+            int responseCode = connection.getResponseCode();
+            InputStream responseStream = responseCode >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String response = readFully(responseStream);
+
+            if (responseCode >= 400) {
+                throw new IllegalStateException(response);
+            }
+
+            JSONObject responseJson = new JSONObject(response);
+            if (responseJson.has("usage") && usageDb != null) {
+                JSONObject usage = responseJson.getJSONObject("usage");
+                usageDb.edit(model, DictateUtils.getAudioDuration(audioFile), usage.optInt("prompt_tokens", 0),
+                        usage.optInt("completion_tokens", 0), 2);
+            }
+
+            JSONArray choices = responseJson.optJSONArray("choices");
+            if (choices == null || choices.length() == 0) {
+                throw new IllegalStateException("No completion choices returned");
+            }
+
+            JSONObject message = choices.getJSONObject(0).optJSONObject("message");
+            if (message == null) throw new IllegalStateException("Missing completion message");
+
+            Object contentObj = message.opt("content");
+            if (contentObj instanceof String) {
+                return ((String) contentObj).trim();
+            }
+
+            if (contentObj instanceof JSONArray) {
+                StringBuilder builder = new StringBuilder();
+                JSONArray contentArray = (JSONArray) contentObj;
+                for (int i = 0; i < contentArray.length(); i++) {
+                    JSONObject part = contentArray.optJSONObject(i);
+                    if (part != null && "text".equals(part.optString("type"))) {
+                        builder.append(part.optString("text"));
+                    }
+                }
+                return builder.toString().trim();
+            }
+
+            throw new IllegalStateException("Unexpected completion response");
+        } catch (IOException | JSONException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private String detectAudioFormat(File file) {
+        String name = file.getName().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".mp3")) return "mp3";
+        if (name.endsWith(".wav")) return "wav";
+        if (name.endsWith(".ogg")) return "ogg";
+        if (name.endsWith(".aac")) return "aac";
+        if (name.endsWith(".flac")) return "flac";
+        if (name.endsWith(".webm")) return "webm";
+        if (name.endsWith(".m4a")) return "m4a";
+        if (name.endsWith(".mp4")) return "mp4";
+        return "m4a";  // Recorder uses MPEG_4 container by default
+    }
+
+    private String readFully(InputStream stream) throws IOException {
+        if (stream == null) return "";
+        byte[] buffer = new byte[4096];
+        StringBuilder builder = new StringBuilder();
+        int bytesRead;
+        try (InputStream is = stream) {
+            while ((bytesRead = is.read(buffer)) != -1) {
+                builder.append(new String(buffer, 0, bytesRead, StandardCharsets.UTF_8));
+            }
+        }
+        return builder.toString();
     }
 
     private void startGPTApiRequest(PromptModel model) {
@@ -1656,6 +1798,9 @@ public class DictateInputMethodService extends InputMethodService {
                 rewordingModel = sp.getString("net.devemperor.dictate.rewording_groq_model", "llama-3.3-70b-versatile");
                 break;
             case 2:
+                rewordingModel = sp.getString("net.devemperor.dictate.rewording_openrouter_model", "google/gemini-2.5-flash");
+                break;
+            case 3:
                 rewordingModel = sp.getString("net.devemperor.dictate.rewording_custom_model",
                         getString(R.string.dictate_custom_rewording_model_hint));
                 break;
